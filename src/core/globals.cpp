@@ -164,10 +164,12 @@ int Offset(const char* name) { return gameConfig->GetOffset(name); }
 // The slot above GetAppID answering 730 means the engine inserted a virtual ahead of it.
 int EngineVTableShift()
 {
-    static int shift = CALL_VIRTUAL(int, Offset("IVEngineServer2::GetAppID") + 1, engineServer2,
-                                    CPlayerSlot(0)) == 730
-                           ? 1
-                           : 0;
+    static int shift = [] {
+        int detected =
+            CALL_VIRTUAL(int, Offset("IVEngineServer2::GetAppID") + 1, engineServer2, CPlayerSlot(0)) == 730 ? 1 : 0;
+        CSSHARP_CORE_INFO("IVEngineServer2 vtable shift detected: {}", detected);
+        return detected;
+    }();
     return shift;
 }
 
