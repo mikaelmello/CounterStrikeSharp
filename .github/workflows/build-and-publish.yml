@@ -21,10 +21,10 @@ jobs:
   setup:
     runs-on: ubuntu-latest
     outputs:
-      gitversion_semver: ${{ steps.gitversion.outputs.semVer }}
-      gitversion_fullsemver: ${{ steps.gitversion.outputs.fullSemVer }}
-      gitversion_assemblysemver: ${{ steps.gitversion.outputs.assemblySemVer }}
-      gitversion_informationalversion: ${{ steps.gitversion.outputs.informationalVersion }}
+      gitversion_semver: ${{ steps.version.outputs.semVer }}
+      gitversion_fullsemver: ${{ steps.version.outputs.fullSemVer }}
+      gitversion_assemblysemver: ${{ steps.version.outputs.assemblySemVer }}
+      gitversion_informationalversion: ${{ steps.version.outputs.informationalVersion }}
     steps:
     - name: Install GitVersion
       uses: gittools/actions/gitversion/setup@v1
@@ -40,6 +40,23 @@ jobs:
       uses: gittools/actions/gitversion/execute@v1
       with:
         useConfigFile: true
+
+    # The fork has none of the upstream tags, so GitVersion falls back to 0.0.1. A
+    # fork release tag such as v1.0.377-fix.1 names the version directly.
+    - name: Version from fork tag
+      id: version
+      shell: bash
+      env:
+        REF: ${{ github.ref }}
+        SEMVER: ${{ steps.gitversion.outputs.semVer }}
+        FULLSEMVER: ${{ steps.gitversion.outputs.fullSemVer }}
+        ASSEMBLY: ${{ steps.gitversion.outputs.assemblySemVer }}
+        INFO: ${{ steps.gitversion.outputs.informationalVersion }}
+      run: |
+        if [[ "$GITHUB_REPOSITORY" != roflmuffin/* && "$REF" =~ ^refs/tags/v([0-9]+\.[0-9]+\.[0-9]+)(-.+)?$ ]]; then
+          SEMVER="${REF#refs/tags/v}"; FULLSEMVER="$SEMVER"; ASSEMBLY="${BASH_REMATCH[1]}.0"; INFO="$SEMVER+${GITHUB_SHA::7}"
+        fi
+        { echo "semVer=$SEMVER"; echo "fullSemVer=$FULLSEMVER"; echo "assemblySemVer=$ASSEMBLY"; echo "informationalVersion=$INFO"; } >> "$GITHUB_OUTPUT"
 
   build_windows:
     needs: setup
@@ -172,7 +189,7 @@ jobs:
           path: managed/CounterStrikeSharp.API/bin/Release
 
   publish:
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'roflmuffin/CounterStrikeSharp' }}
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && (github.repository == 'roflmuffin/CounterStrikeSharp' || github.repository == 'mikaelmello/CounterStrikeSharp') }}
     permissions:
       contents: write
     needs: ["setup", "build_linux", "build_windows", "build_managed"]
@@ -231,6 +248,7 @@ jobs:
           (cd build/windows && zip -qq -r ../../counterstrikesharp-with-runtime-windows-${{ needs.setup.outputs.gitversion_semver }}.zip *)
       
       - name: Generate a changelog
+        if: ${{ github.repository == 'roflmuffin/CounterStrikeSharp' }}
         uses: orhun/git-cliff-action@v4
         id: git-cliff
         with:
@@ -243,7 +261,7 @@ jobs:
         with:
           append_body: true
           body: |
-            ${{ steps.git-cliff.outputs.content }}
+            ${{ github.repository == 'roflmuffin/CounterStrikeSharp' && steps.git-cliff.outputs.content || 'Patched build; see the tag message for what it adds to the upstream release.' }}
 
             Please refer to [CHANGELOG.md](https://github.com/roflmuffin/CounterStrikeSharp/blob/${{ github.ref_name }}/CHANGELOG.md) for details.
           files: |
@@ -253,12 +271,13 @@ jobs:
             counterstrikesharp-with-runtime-linux-${{ needs.setup.outputs.gitversion_semver }}.zip
 
       - name: Publish NuGet package
+        if: ${{ github.repository == 'roflmuffin/CounterStrikeSharp' }}
         run: |
           dotnet nuget push build/api/CounterStrikeSharp.API.${{ needs.setup.outputs.gitversion_semver }}.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
           dotnet nuget push build/api/CounterStrikeSharp.API.${{ needs.setup.outputs.gitversion_semver }}.snupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
 
       - name: Send Notification to Discord
-        if: ${{ !contains(github.ref_name, '-alpha') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-rc') }}
+        if: ${{ github.repository == 'roflmuffin/CounterStrikeSharp' && !contains(github.ref_name, '-alpha') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-rc') }}
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         uses: Ilshidur/action-discord@0.3.2
